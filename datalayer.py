@@ -169,5 +169,3 @@ def validate_data(final_df):
         
         
 
-
-clean_data(load_raw_data('dummy_data.xlsx'))
