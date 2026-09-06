@@ -117,7 +117,7 @@ def check_misalign_date(long_raw_data):
 
 def check_price_and_volume(long_raw_df):
     # print(long_raw_df)
-    long_raw_df.loc[lambda x: ~((x['PX_LOW'] < x['PX_LAST']) & (x['PX_LAST']  < x['PX_HIGH']) & (x['PX_LOW'] < x['PX_OPEN']) & (x['PX_OPEN']< x['PX_HIGH'])), ['PX_LOW', 'PX_HIGH', 'PX_OPEN', 'PX_LAST']] = None
+    long_raw_df.loc[lambda x: ~((x['PX_LOW'] <= x['PX_LAST']) & (x['PX_LAST']  <= x['PX_HIGH']) & (x['PX_LOW'] <= x['PX_OPEN']) & (x['PX_OPEN']<= x['PX_HIGH'])), ['PX_LOW', 'PX_HIGH', 'PX_OPEN', 'PX_LAST']] = None
     ##---------Track unusual volume with Z-score------------##
     
     mean = long_raw_df.groupby('ticker')['PX_VOLUME'].transform('mean')
