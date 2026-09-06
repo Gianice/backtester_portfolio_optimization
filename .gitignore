@@ -1,0 +1,43 @@
+# Excel files (data, not code — keep out of version control)
+*.xlsx
+*.xls
+~$*.xlsx
+
+# Other data files
+*.csv
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+.venv/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS junk
+.DS_Store
+Thumbs.db# Excel files (data, not code — keep out of version control)
+*.xlsx
+*.xls
+~$*.xlsx
+
+# Other data files
+*.csv
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+.venv/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS junk
+.DS_Store
+Thumbs.db
