@@ -103,7 +103,7 @@ Stated explicitly, because these choices are what separate a plausible backtest 
 
 ---
 
-## Roadmap
+<!-- ## Roadmap
 
 - [x] Data pipeline with validation
 - [x] MA crossover signal layer with volatility overlay
@@ -117,7 +117,7 @@ Stated explicitly, because these choices are what separate a plausible backtest 
 - [ ] Walk-forward out-of-sample harness and parameter sensitivity grid
 - [ ] Second strategy (mean-reversion) to demonstrate the framework generalises
 
----
+--- -->
 
 ## Running it
 
@@ -132,7 +132,7 @@ python main.py           # runs the backtest and plots an equity curve
 
 ## Notes
 
-Built as a self-directed project to develop practical quantitative research skills — data engineering, signal construction, backtest methodology and execution-cost analysis.
+Built as a self-directed project to develop practical quantitative research skills : data engineering, signal construction, backtest methodology and execution-cost analysis.
 
 
 by Gianice Lim Kai Qing
