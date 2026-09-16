@@ -23,7 +23,7 @@ class Strategy(ABC):
     """
     
     @abstractmethod
-    def generate_signal(self, df: pd.DataFrame) -> pd.Series:
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
         raise NotImplementedError
     
     

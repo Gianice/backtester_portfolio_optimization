@@ -24,7 +24,7 @@ class MACrossover(Strategy):
     
     # -- internals -----------------------------------------------------------
     
-    def add_moving_average(self, df:pd.DataFrame) -> pd.DataFrame:
+    def add_moving_averages(self, df:pd.DataFrame) -> pd.DataFrame:
         out = df.copy()
         out = out.reset_index().sort_values(['ticker','real_date'])
         out['short_ma'] = out.groupby('ticker')['PX_LAST'].transform(lambda x: x.rolling(window = self.short_window).mean())
@@ -32,12 +32,12 @@ class MACrossover(Strategy):
         #x inside the lambda is a pandas series
             
             
-        return out
+        return out.set_index(['real_date', 'ticker'])
     
     # -- public API ----------------------------------------------------------
 
     def generate_signals(self, df: pd.DataFrame) -> pd.Series:
-        out = self._add_moving_averages(df)
+        out = self.add_moving_averages(df)
 
         out['short_ma_ytd'] = out.groupby('ticker')['short_ma'].shift(1)
         out['long_ma_ytd'] = out.groupby('ticker')['long_ma'].shift(1)
@@ -52,7 +52,7 @@ class MACrossover(Strategy):
         choices = [1, -1]
 
         signals = np.select(conditions, choices, default=0)
-        return pd.Series(signals, index=out.index, name='signal')
+        return pd.Series(signals, index=out.index, name='signal').reindex(df.index)
 
     def debug_frame(self, df: pd.DataFrame) -> pd.DataFrame:
         """Same computation, but returns the intermediate columns too.
@@ -60,7 +60,7 @@ class MACrossover(Strategy):
         Handy when you want to eyeball why a crossover did or didn't fire.
         Not used by the engine.
         """
-        out = self._add_moving_averages(df)
+        out = self.add_moving_averages(df)
         out['short_ma_ytd'] = out.groupby('ticker')['short_ma'].shift(1)
         out['long_ma_ytd'] = out.groupby('ticker')['long_ma'].shift(1)
         out['signal'] = self.generate_signals(df)

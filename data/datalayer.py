@@ -170,6 +170,23 @@ def validate_data(final_df):
     if issues:
         for i in issues:
             print(i)
+    
+    ###check total flat (PX_LAST yesterday = PX_LAST today)
+    flat = final_df.groupby(level='ticker')['PX_LAST'].apply(
+    lambda s: (s.diff() == 0).sum())
+    total_flat = int(flat.sum())
+    if total_flat:
+        issues.append(
+            f"Flat closes (PX_LAST == previous close): "
+            f"{total_flat:,} of {len(final_df):,} "
+            f"({total_flat/len(final_df)*100:.2f}%)")
+
+    share = final_df.groupby(level='ticker')['PX_LAST'].apply(
+        lambda s: (s.diff() == 0).mean())
+    suspect = share[share > 0.15]
+    if len(suspect):
+        issues.append(f"Tickers >15% flat (likely carried-forward, not real "
+                      f"price series):\n{(suspect*100).round(1).to_string()}")
     else:
         print("All checks passed")
         
