@@ -73,3 +73,12 @@ if __name__ == '__main__':
         r = run_all(df, signals, cost_bps=bps)
         print(f'  {bps:>3} bp   median Sharpe {r["sharpe_ratio"].median():>7.3f}   '
               f'median return {r["total_return"].median()*100:>8.2f}%')
+        
+    w = df.xs('WDC US Equity', level='ticker')['PX_LAST']
+    print(w.pct_change().abs().nlargest(5).to_string())
+    print(w.iloc[0], '->', w.iloc[-1])
+    
+    
+    print(f'median buy-and-hold   {cmp["buy_hold"].median()*100:+.1f}%')
+    print(f'median edge           {cmp["edge"].median()*100:+.1f}%')
+    print(f'capture ratio         {cmp["strategy"].sum()/cmp["buy_hold"].sum():.1%}')

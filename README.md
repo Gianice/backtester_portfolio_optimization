@@ -2,7 +2,7 @@
 
 A modular backtesting engine for systematic equity strategies, built from the data layer up. The emphasis is on **making the numbers trustworthy** — realistic fills, explicit transaction costs, and no look-ahead — rather than on finding alpha.
 
-The headline result is that the strategy tested here **loses to buy-and-hold**. That is reported rather than buried, because the purpose of the harness is to produce numbers you can defend.
+The headline result is that the strategy tested here **captures 36% of the return available from buy-and-hold, and beats it on 13 of 87 tickers**. That is reported up front rather than buried, because the purpose of the harness is to produce numbers you can defend.
 
 ---
 
@@ -131,18 +131,56 @@ Stated explicitly, because these choices are what separate a plausible backtest 
 
 **2,909 signals fired** — 1,320 entries, 1,589 exits. More exits than entries is expected: the volatility filter blocks entries but never exits. Median 30 trades per ticker over 6.5 years, roughly 4.6 round trips a year.
 
-### Headline
+### Headline: the strategy loses to doing nothing
 
 | | |
 |---|---|
-| Median Sharpe (gross) | **0.333** |
-| Median Sharpe (net, 5 bp) | **0.322** |
-| Median total return (gross) | +45.3% |
-| Buy-and-hold `NDX Index` | **+236.0%** |
+| Tickers where the strategy beat buy-and-hold | **13 of 87** (15%) |
+| Median total return — strategy | +45.3% |
+| Median total return — buy-and-hold | **+137.1%** |
+| Median edge | **−88.1 pp** |
+| **Capture ratio** (Σ strategy ÷ Σ buy-and-hold) | **36.2%** |
+| Median Sharpe, gross | 0.333 |
+| Median Sharpe, net of 5 bp | 0.322 |
+| Buy-and-hold `NDX Index` | +236.0% |
 
-**The strategy loses to buy-and-hold, badly.** This is the expected failure mode of a long-only trend-following rule during a strong sustained uptrend: the system sits in cash whenever the short average is below the long one, and every whipsaw exits near a local low and re-enters higher. The 2020–2026 Nasdaq-100 was close to the worst possible environment for it.
+**The strategy captured just over a third of the return available from buying once and holding.** On 85% of the universe, doing nothing was better.
 
-A median Sharpe of 0.333 is not an investable result. It is reported here because a harness that only produces flattering numbers is not a harness.
+This is the expected failure mode of a long-only trend-following rule during a sustained uptrend: the system sits in cash whenever the short average is below the long one, and each whipsaw exits near a local low and re-enters higher. The 2020–2026 Nasdaq-100 was close to the worst possible environment for it.
+
+A median Sharpe of 0.333 is not an investable result. It is reported because a harness that only produces flattering numbers is not a harness.
+
+### One row that explains the whole result
+
+`NVDA` ranked **4th best by Sharpe (1.06)** of all 87 tickers — and returned **+786% against buy-and-hold's +3,301%**.
+
+Both numbers are correct, and they disagree because they measure different things. Sharpe rewarded the strategy for sitting out NVDA's drawdowns; total return shows what sitting out cost — roughly 2,500 percentage points. Any evaluation that reported only risk-adjusted performance would have called this a success.
+
+### The "wins" are mostly downside avoidance, not alpha
+
+Of the 13 tickers where the strategy beat buy-and-hold, several are cases where **buy-and-hold lost money and the strategy lost less**:
+
+| Ticker | Strategy | Buy-and-hold | Edge |
+|---|---|---|---|
+| WDC | +1630% | +957% | +674 pp |
+| META | +315% | +174% | +141 pp |
+| PDD | +202% | +102% | +100 pp |
+| INTU | +62.9% | −1.5% | +64 pp |
+| CMCSA | +0.9% | −49.3% | +50 pp |
+| PYPL | −17.8% | −61.4% | +44 pp |
+| KHC | −6.4% | −30.1% | +24 pp |
+
+And the losses are concentrated in the biggest winners:
+
+| Ticker | Strategy | Buy-and-hold | Edge |
+|---|---|---|---|
+| NVDA | +786% | +3301% | −2514 pp |
+| STX | +101% | +1646% | −1544 pp |
+| KLAC | +127% | +1272% | −1145 pp |
+| TSLA | +143% | +1268% | −1125 pp |
+| CRWD | +233% | +1265% | −1033 pp |
+
+The honest characterisation is therefore: **this is a drawdown-avoidance overlay, not a return generator.** On names that fell it lost less; on names that rose it captured a fraction. Whether that trade is worth making depends entirely on the objective — but it is not what "a profitable strategy" means.
 
 ### Cost sensitivity
 
@@ -155,7 +193,7 @@ A median Sharpe of 0.333 is not an investable result. It is reported here becaus
 | 20 | 0.289 | +36.56% |
 | 50 | 0.224 | +26.60% |
 
-**The strategy is largely cost-insensitive.** At a realistic 5 bp it loses 3% of its Sharpe; it survives to 0.224 even at 50 bp. The reason is directly visible in the trade count — at ~4.6 round trips a year there is very little to tax. A strategy trading weekly would see 5 bp consume the entire edge.
+**The strategy is largely cost-insensitive.** At a realistic 5 bp it loses 3% of its Sharpe, and survives to 0.224 even at 50 bp. The reason is visible in the trade count — at ~4.6 round trips a year there is very little to tax. A strategy trading weekly would see 5 bp consume the entire edge.
 
 This is the one genuinely favourable property the test found, and it is a property of the *turnover*, not of the signal.
 
@@ -171,7 +209,9 @@ This is the one genuinely favourable property the test found, and it is a proper
 
 The top of the table is almost entirely **semiconductors and semiconductor equipment** — WDC, AVGO, MU, NVDA, TER, MRVL, AMAT, LRCX, AMD, ASML, LITE. Moving-average crossover works where there are long sustained trends, and that is where the trends were. This is not a general edge; it is a bet on trend persistence, and the table shows exactly which names happened to supply it.
 
-Drawdowns of 40–60% across the leaders are also worth naming. The volatility filter blocks *entries* during turbulent regimes but has no exit rule, so it cannot protect against a drawdown that begins while a position is already open.
+Drawdowns of 40–60% across the leaders are worth naming too. The volatility filter blocks *entries* during turbulent regimes but has no exit rule, so it cannot protect against a drawdown that begins while a position is already open.
+
+`WDC` tops both the Sharpe ranking and the edge ranking, which is the usual signature of a data problem — so it was checked. Its five largest daily moves are 28.7%, 20.4%, 18.3%, 17.7% and 16.8%, with no 2× or 0.5× discontinuity of the kind an unadjusted split or spinoff produces. The 10.6× price ratio is built from many moves rather than one jump, so the figure appears genuine.
 
 ---
 
