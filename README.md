@@ -4,6 +4,8 @@ A modular backtesting engine for systematic equity strategies, built from the da
 
 The headline result is that the strategy tested here **captures 36% of the return available from buy-and-hold, and beats it on 13 of 87 tickers**. That is reported up front rather than buried, because the purpose of the harness is to produce numbers you can defend.
 
+A second strategy — **PCA residual statistical arbitrage** (Avellaneda & Lee, 2010) — is in progress. Its factor-extraction layer is built; see [PCA residual statistical arbitrage](#pca-residual-statistical-arbitrage-in-progress).
+
 ---
 
 ## Why this exists
@@ -58,6 +60,14 @@ Measured by the share of bars whose close equals the previous close:
 
 **8,435 bars recovered.** Four of every five flat bars in the original dataset were manufactured by the bug. A genuinely flat close is uncommon for a liquid large-cap (1–2%), so the residual 4.48% is still worth investigating — most of it traces to one ticker (see *Known limitations*).
 
+### Wide format for cross-sectional work (`data/wide.py`)
+
+The backtest loop works ticker by ticker on the long panel; PCA needs every ticker side by side. `load_wide()` pivots the panel into two `days × tickers` frames — prices and simple returns — drops `NDX Index` (a benchmark, not a tradeable name), and removes days on which every ticker's return is exactly zero (market holidays carried through by the date alignment).
+
+Result: **1,626 days × 87 tickers, no missing values.** 65 all-zero days removed, consistent with roughly ten US market holidays a year over 6.5 years.
+
+`load_wide_cached()` writes both frames to parquet and reuses them, rebuilding automatically whenever the source CSV is newer than the cache — so a fix to the cleaning pipeline can never be silently masked by stale cached data. Paths are anchored to the file's own location rather than the working directory.
+
 ---
 
 ## Anomaly detection (`data/quality.py`)
@@ -67,7 +77,7 @@ An Isolation Forest flags unusual bars on six scale-free features: return, absol
 Four design choices, all deliberate:
 
 - **Flag, don't delete.** Downstream code decides what to do. Nulling rows destroys the evidence and makes it impossible to count what was caught.
-- **Fit per ticker.** A normal day for a volatile small-cap is an extreme event for a mega-cap. Pooling teaches the model an average regime that fits neither.
+- **Fit per ticker.** A normal day for a volatile small-cap is an extreme event for a mega-cap.
 - **Engineer away the diagonal.** Isolation Forest splits on one feature at a time, so its decision boundaries are axis-parallel and it approximates a diagonal relationship poorly. Large moves arrive on large volume — a diagonal in (`abs_ret`, `log_volume`) space. Regressing one on the other and handing the model the residual turns that diagonal into a single column one cut can isolate. The residual is uncorrelated with the regressor by construction.
 - **`contamination` is an assumption, not a discovery.** It fixes where the threshold falls, not what the scores are.
 
@@ -89,6 +99,7 @@ One detail that shows the per-ticker fit working: `EXC` (a utility) appears thre
 data/
   datalayer.py            load → clean → validate → cleaned_data.csv
   quality.py              Isolation Forest anomaly flagging
+  wide.py                 long panel → wide prices/returns, parquet cache
 
 strategy/
   base.py                 Strategy ABC — the contract every strategy implements
@@ -102,9 +113,11 @@ engine/
 
 research/
   metrics.py              performance and risk metrics
+  factors.py              rolling PCA factor extraction (stat arb risk model)
 
 tests/
   test_pnl.py             hand-computed P&L assertions
+  test_pca.py             PCA sanity checks on a saved window
 
 main.py                   wiring only
 ```
@@ -215,6 +228,45 @@ Drawdowns of 40–60% across the leaders are worth naming too. The volatility fi
 
 ---
 
+## PCA residual statistical arbitrage (in progress)
+
+Strip out the part of each stock's move that the market and its sectors explain, and bet that what's left snaps back. Follows Avellaneda & Lee (2010), *Statistical Arbitrage in the US Equities Market*.
+
+**The idea.** A stock's daily return is a common part (the market rose, tech outperformed) plus a stock-specific part. The common part is hedged away. The stock-specific part, summed over time, tends to drift and revert — that reversion is the edge. Chosen over pairs trading because 87 tickers give 3,741 candidate pairs (~200 false positives from noise alone) but only 87 residuals.
+
+### Pipeline
+
+1. **Window** — on each trade date, the previous 252 days of returns for all stocks. The trade date itself is excluded, so there is no look-ahead.
+2. **Standardise** — each stock to mean 0, std 1, so volatile names don't dominate.
+3. **Correlation matrix** — C (N × N).
+4. **Eigendecomposition** — each eigenvector is a portfolio of weights across all stocks; each eigenvalue is how much of total variance it explains. Signs are fixed every window so a factor can't flip between days.
+5. **Choose K** — keep eigenvalues above the Marchenko–Pastur noise bound (2.52 for 87 stocks on 252 days). PC1 is the market.
+6. **Factor returns** — `F = Rs @ v[:, :K]`: K time series, each a common force moving day by day.
+7. **Regress each stock on F** — residual `ε = r − β·F` is the stock-specific move.
+8. **Cumulate** — `X = ε.cumsum()`: how far the stock has drifted from where the factors say it should be.
+9. **Mean-reversion test** — fit an OU process to X (κ, equilibrium level, σ, half-life). Trade only stocks passing an ADF test **and** with a 1–30 day half-life. The half-life check alone passes 100% of pure noise.
+10. **Signal** — `s = −m / σ_eq`, a z-score of how stretched X is.
+11. **Trade** — buy below −1.25, short above +1.25; close longs at |s| < 0.50, shorts at |s| < 0.75 (earlier, because shorts carry borrow cost).
+12. **Portfolio** — 1× gross, checked for dollar neutrality and zero net exposure to each factor every rebalance.
+13. **Validate** — costs on turnover, 504-day warm-up, bootstrap CI on Sharpe, sensitivity across all nine parameters, and the whole pipeline re-run on **shuffled returns**. Noise produces confident-looking κ and half-lives, so a result only counts if it clearly beats that baseline.
+
+| Steps | Role | File | Status |
+|---|---|---|---|
+| 1–6 | Risk model — what to hedge | `research/factors.py` | ✅ built |
+| 7–8 | Isolate the stock-specific move | `research/residuals.py` | next |
+| 9 | Test whether it reverts | `research/ou.py` | — |
+| 10–12 | Turn it into positions | — | — |
+| 13 | Prove it isn't noise | — | — |
+
+### Limitations specific to this strategy
+
+- **Survivorship bias matters more** — PCA on today's survivors finds cleaner factors than the real historical universe would.
+- **Turnover is the cost risk** — at ~40% daily turnover, 5 bp costs ~5% of capital a year.
+- **Short borrow not modelled** — every short assumes a locate.
+- **K can change between windows**, so `PC2` on one date isn't guaranteed to be the same economic factor on another.
+
+---
+
 ## Known limitations
 
 Listed because they bound what the numbers above are worth.
@@ -229,7 +281,7 @@ Listed because they bound what the numbers above are worth.
 
 5. **The volume filter is destructive.** Bars with |z| > 3 on volume are nulled and forward-filled. A market panic day is by definition a >3σ volume day, so March 2020 volume is replaced by a stale value from a calm day — and `quality.py` computes its volume features from that. 5.66% of volume rows carry a repeated value. Extreme volume is information, not an error; catching the real defect (`volume <= 0`) would be better.
 
-6. **`NBIS US Equity` is not a real price series.** 1,691 rows from 2020 with zero nulls but 781 flat days (46%). The company did not trade under that ticker until late 2024; the earlier rows are carried-forward placeholders in the vendor export. `drop_non_universal` misses it precisely because there are no nulls to count. It accounts for a large share of the residual 4.48% flat-close rate.
+6. **`NBIS US Equity` is not a real price series.** 1,691 rows from 2020 with zero nulls but 781 flat days (46%). The company did not trade under that ticker until late 2024; the earlier rows are carried-forward placeholders in the vendor export. `drop_non_universal` misses it precisely because there are no nulls to count. It accounts for a large share of the residual 4.48% flat-close rate. The stat arb factor layer works around it by dropping zero-variance tickers per window, but the series itself is still wrong.
 
 7. **The anomaly model sees the full history.** Fitting on all data to judge whether a given day is unusual is look-ahead. Defensible for a one-off cleaning pass, not for anything used in a live signal.
 
@@ -243,8 +295,11 @@ Listed because they bound what the numbers above are worth.
 - [x] Transaction-cost model and sensitivity sweep
 - [x] Performance metrics — Sharpe, max drawdown, VaR, hit rate, turnover
 - [x] Isolation Forest anomaly detection on price and volume
+- [x] Wide-format loader with parquet cache
+- [x] PCA residual stat arb — rolling factor extraction with three K criteria
+- [ ] PCA residual stat arb — residuals, OU fit with ADF filter, signal, portfolio backtest
+- [ ] PCA residual stat arb — validation against a shuffled-returns null baseline
 - [ ] Walk-forward out-of-sample harness and parameter sensitivity grid
-- [ ] Second strategy (mean-reversion) to demonstrate the framework generalises
 - [ ] Portfolio allocation layer — single capital pool, position sizing, mean-variance optimiser
 - [ ] Risk attribution — marginal contribution to portfolio volatility
 - [ ] Event-driven refactor (`Portfolio` / `ExecutionHandler` over an event queue)
@@ -258,11 +313,17 @@ Listed because they bound what the numbers above are worth.
 ```bash
 pip install -r requirements.txt
 
-python data/datalayer.py    # builds cleaned_data.csv from the Excel export
-python data/quality.py      # flags anomalous bars
-python main.py              # runs the backtest, prints results and the cost sweep
-pytest tests/               # P&L correctness assertions
+python data/datalayer.py      # builds cleaned_data.csv from the Excel export
+python data/quality.py        # flags anomalous bars
+python main.py                # runs the MA backtest, prints results and the cost sweep
+
+python data/wide.py           # builds and caches the wide price/return frames
+python -m research.factors    # rolling PCA; prints K chosen by each criterion
+
+pytest tests/                 # P&L and PCA sanity checks
 ```
+
+`research.factors` must be run as a module (`-m`) from the repository root so that `from data.wide import ...` resolves.
 
 ---
 

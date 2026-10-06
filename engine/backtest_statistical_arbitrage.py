@@ -1,7 +1,7 @@
 """
 engine/portfolio_backtest.py — Phase 0: the new engine.
 
-Your existing engine/backtest.py holds ONE ticker and flips between
+Existing engine/backtest.py holds ONE ticker and flips between
 cash and fully-invested. It cannot express "long 30 names, short 30 names,
 each at 1.6% of capital". This file replaces it.
 
@@ -83,6 +83,7 @@ def run_portfolio_backtest(prices: pd.DataFrame,
         
         shares: shares before today's trade; target_shares : shares traded today
         '''
+        
         equity = cash + (px * shares).sum()
         turnover = (w - prev_w).abs().sum()
         cost = turnover * equity * cost_bps / 10000
@@ -92,10 +93,13 @@ def run_portfolio_backtest(prices: pd.DataFrame,
         shares = target_shares
         prev_w = w
         
-        equity_curves.append({'real_date': date, 'todays_value': cash + (target_shares*px).sum()})
+        equity_curves.append({'real_date': date, 
+                              'todays_value': cash + (target_shares*px).sum(),
+                              'turnover': turnover,
+                              'cost' : cost})
         weight_log[date] = w
         
-    return equity_curves
+    return equity_curves, weight_log
 
 
 
@@ -124,20 +128,21 @@ def compute_portfolio_stats(equity_curve, weight_log, rf = 0.0) -> dict:
     annualized_sharpe = daily_sharpe * np.sqrt(TRADING_DAYS)
     
     ##quality check: avg_gross, and avg_net
-    avg_gross = weight_log.abs().sum(axis = 1).mean()
-    avg_net = weight_log.sum(axis = 1).mean()
+    avg_gross = w.abs().sum(axis = 1).mean()
+    avg_net = w.sum(axis = 1).mean()
     drawdown = {}
-    v = df['return']
+    v = df['todays_value']
     dd = v/v.cummax() - 1
     drawdown['drawdown'] = dd.min()
     
     trough_date = dd.idxmin()
-    peak_date = dd.loc[:trough_date].idxmax()
+    peak_date = v.loc[:trough_date].idxmax()
     
     drawdown['trough_date'] = trough_date
     drawdown['peak_date'] = peak_date
     
-    return annualized_sharpe, avg_gross, avg_net, drawdown
+    return {'sharpe': annualized_sharpe, 'avg_gross': avg_gross,
+        'avg_net': avg_net, **drawdown}
     
     
     
