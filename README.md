@@ -293,7 +293,7 @@ Each column is one factor as a time series; each row is one day. `F[2025-06-04, 
 12. **Portfolio** — 1× gross, checked for dollar neutrality and zero net exposure to each factor every rebalance.
 **E. Validation — prove it isn't noise**
  
-13. Costs on turnover, 504-day warm-up, bootstrap CI on Sharpe, sensitivity across all nine parameters, and the whole pipeline re-run on **shuffled returns**. Noise produces confident-looking κ and half-lives, so a result only counts if it clearly beats that baseline.
+13. Costs on turnover, 252-day warm-up, bootstrap CI on Sharpe, sensitivity across all nine parameters, and the whole pipeline re-run on **shuffled returns**. Noise produces confident-looking κ and half-lives, so a result only counts if it clearly beats that baseline.
 ### Limitations specific to this strategy
  
 - **Survivorship bias matters more** — PCA on today's survivors finds cleaner factors than the real historical universe would.

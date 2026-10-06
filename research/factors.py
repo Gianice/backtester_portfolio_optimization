@@ -70,7 +70,7 @@ def extract_factors(win: pd.DataFrame, k: int):
          silently reverses mid-backtest and every beta after it is wrong.
     """
     
-    win = win.loc[:, win.std > 0]  
+    win = win.loc[:, win.std() > 0]  
     
     R = win.to_numpy()
     
