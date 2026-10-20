@@ -138,6 +138,8 @@ research/
   factors.py              Strategy 2: rolling PCA factor extraction
   residuals.py            Strategy 2: factor regression and cumulative residuals
   ou.py                   Strategy 2: OU fit and ADF stationarity filter
+  signals.py              Strategy 2: s-score → positions (+1 / −1 / 0)
+  diagnostics.py          Strategy 2: residual cross-correlation check
 
 tests/
   test_pnl.py             hand-computed P&L assertions (Strategy 1 engine)
@@ -265,95 +267,105 @@ Drawdowns of 40–60% across the leaders are worth naming too. The volatility fi
 
 ## Strategy 2 — PCA residual statistical arbitrage (in progress)
 
-Strip out the part of each stock's move that the market and its sectors explain, and bet that what's left snaps back. Follows Avellaneda & Lee (2010), *Statistical Arbitrage in the US Equities Market*.
+Remove the part of each stock's return explained by common factors, then bet that the leftover drift reverts. Follows Avellaneda & Lee (2010).
 
-**The idea.** A stock's daily return is a common part (the market rose, tech outperformed) plus a stock-specific part. The common part is hedged away. The stock-specific part, summed over time, tends to drift and revert — that reversion is the edge. Chosen over pairs trading because 87 tickers give 3,741 candidate pairs to screen, each a chance for a false positive, but only 87 residuals.
+### A. Steps
 
-### Pipeline
+Notation: **N** = stocks (87), **T** = window length (252 days), **K** = factors kept, **t** = day, **i** = stock, **k** = factor.
 
-**A. Risk model — what to hedge** (`research/factors.py`, ✅ built)
+**1. Rolling returns** — `load_wide_cached()` (`data/wide.py`), rolling loop in `research/factors.py`
 
-1. **Window** — on each trade date, the previous 252 days of returns for all stocks. The trade date itself is excluded, so there is no look-ahead.
-2. **Standardise** — each stock to mean 0, std 1, so volatile names don't dominate.
-3. **Correlation matrix** — C (N × N).
-4. **Eigendecomposition** — each eigenvector is a portfolio of weights across all stocks; each eigenvalue is how much of total variance it explains. Signs are fixed every window so a factor can't flip between days.
-5. **Choose K** — keep eigenvalues above the Marchenko–Pastur noise bound (2.52 for 87 stocks on 252 days). PC1 is the market. The 55%-of-variance rule used in the original paper is computed alongside for comparison.
-6. **Factor returns** — `F = Rs @ v[:, :K]`: K time series, each a common force moving day by day.
+For each trade date, take the previous T days of returns, excluding the trade date (no look-ahead):
 
-The eigenvectors `v` form an N × N matrix: rows are stocks, columns are components. A single eigenvector is one column — `v[:, 0]` is PC1's weights across all stocks — while `v[i, :]` is stock *i*'s loading on every component. The eigenvalues `w` are sorted descending and sum to N, so `w[0] / N` is the share of variance PC1 explains.
+> R = [ r_{i,t} ], shape T × N
 
-The factor returns `F = Rs @ v[:, :K]` form a window × K matrix: each column is one factor as a time series, each row one day. Shapes multiply as (252 × N) @ (N × K) → (252 × K). `F` is the same for every stock — step 7 gives each stock its own betas to it.
+- r_{i,t} = simple return of stock i on day t
 
-**How many factors? The two rules disagree, and that is the finding.**
+**2. Standardise** — `extract_factors()` (`research/factors.py`)
 
-Across 1,374 rolling windows (1,626 days less the 252-day warm-up):
+> Rs_{i,t} = ( r_{i,t} − r̄_i ) / σ_i
 
-| Rule | Min | Median | Max |
-|---|---|---|---|
-| Marchenko–Pastur noise bound | 3 | **3** | 4 |
-| 55% cumulative variance (Avellaneda & Lee) | 3 | **9** | 15 |
+- r̄_i, σ_i = mean and std of stock i *within the window*
+- Every stock gets mean 0, std 1, so volatile names don't dominate.
 
-Only 3–4 eigenvalues are ever distinguishable from noise. The variance rule asks for three times as many at the median, and swings from 3 to 15 with the correlation regime: when stocks move together, as in a crash, three factors already explain 55%; in calmer periods the variance is spread thin and the rule keeps adding components to reach the threshold. The extra factors it adds beyond the noise bound are indistinguishable from randomness — and hedging against noise strips out part of the stock-specific move the strategy is trying to trade.
+**3. Correlation matrix** — `extract_factors()`
 
-K is therefore set by the Marchenko–Pastur bound. The variance rule comes from a paper run on a much larger universe; on 87 names it over-fits the risk model.
+> C = Rsᵀ Rs / (T − 1), shape N × N
 
-**PC1 is the market, but not a pure one.** On the saved 252-day window, PC1 explains about 15% of variance (λ₁ = 12.7 of 87) and 74 of 87 stocks load positively. The 13 that load negatively are almost all defensives — utilities (EXC, AEP, XEL), staples (PEP, MDLZ, COST, KHC, WMT) and telecom (TMUS, CMCSA) — and every one of their loadings is small: the largest is −0.064, against a median of 0.099 for the rest. In a window where defensives moved against tech, PC1 picks up a growth-versus-defensive tilt alongside the market. The test for PC1 therefore checks that wrong-signed loadings are small, not that none exist.
+- C_{ij} = correlation between stocks i and j (covariance of standardised returns)
 
-**B. Residuals — isolate the stock-specific move** (`research/residuals.py`, ✅ built)
+**4. Eigendecomposition** — `extract_factors()`
 
-7. **Regress each stock on F** — residual `ε = r − β·F`.
-8. **Cumulate** — `X = ε.cumsum()`: how far the stock has drifted from where the factors say it should be.
+> C v_k = λ_k v_k
 
-Checks on a 252-day window with K = 3, all 87 stocks:
+- v_k = eigenvector: weights across all stocks (a factor portfolio); λ_k = variance it explains, Σλ = N
+- Sorted descending; signs fixed each window so a factor can't flip day to day.
 
-| Check | Result | What it confirms |
+**5. Choose K** — `choose_k()` (`research/factors.py`)
+
+> keep λ_k > λ_max = (1 + √(N/T))² ≈ 2.52   (Marchenko–Pastur)
+
+- λ_max = the largest eigenvalue pure noise can produce with N stocks and T days.
+- Factor returns: **F = Rs · v_{1..K}**, shape T × K.
+
+**6. Factor regression → residual** — `compute_residuals()` (`research/residuals.py`)
+
+> r_i = α_i + F β_i + ε_i
+
+- α_i = intercept; β_i = stock i's exposure to each factor (K,); ε_i = residual, the stock-specific return
+- Solved for all stocks at once: R = [1, F] · coef, coef shape (1+K) × N.
+
+**7. Cumulative residual** — `compute_residuals()`
+
+> X_{i,t} = Σ_{s≤t} ε_{i,s}
+
+- X = how far the stock has drifted from where the factors say it should be.
+
+**8. OU fit, ADF and score** — `fit_ou()` (`research/ou.py`)
+
+> X_{t+1} = a + b X_t + ζ_t   (AR(1), discrete form of dX = κ(m − X)dt + σ dW)
+
+| Quantity | Formula | Meaning |
 |---|---|---|
-| max \|Fᵀε\| | 4.0 × 10⁻¹⁴ | Residuals are orthogonal to the factors — the regression is implemented correctly |
-| max \|X on last day\| | 5.3 × 10⁻¹⁶ | X ends at exactly zero, as OLS with an intercept forces |
-| Mean PC1 beta | +0.0032 | Stocks load positively on PC1, so the eigenvector sign-fixing works |
-| Median residual std ÷ raw std | **0.63** | Three factors explain about 60% of a typical stock's variance (1 − 0.63²) |
+| κ | −ln(b) × 252 | speed of reversion (needs 0 < b < 1) |
+| half-life | ln 2 / (−ln b) days | days for the gap to halve |
+| m | a / (1 − b) | equilibrium level X reverts to |
+| σ_eq | √( Var(ζ) / (1 − b²) ) | typical distance of X from m |
+| s | (X_t − m) / σ_eq | how stretched X is, in σ units |
 
-The last row is the substantive one. Even after removing the market and two further common factors, **the residual still carries 63% of a typical stock's volatility.** That stock-specific part is what Strategy 2 trades — whether any of it mean-reverts is the question for step 9.
+- **ADF test:** H₀ = random walk (b = 1). Trade only if p < 0.05 **and** half-life is 1–30 days (`tradeable`).
 
-The second row has a consequence worth stating: pinning X to zero at the end of the window (and near zero at the start) makes it a path that must return, which flatters every in-window mean-reversion statistic. This is why step 9 cannot rely on the half-life alone.
+### B. Positions — `update_positions()` (`research/signals.py`)
 
-**C. Mean reversion — does the drift come back?** (`research/ou.py`, ✅ built)
+| Yesterday | Condition | Today |
+|---|---|---|
+| flat | tradeable and s < −1.25 | long (+1) |
+| flat | tradeable and s > +1.25 | short (−1) |
+| long | s > −0.50 | close |
+| short | s < +0.75 | close (earlier: borrow cost) |
+| any | not tradeable | close |
 
-9. **OU fit + ADF test** — estimate κ, equilibrium level, σ and half-life from X. Trade only stocks passing ADF **and** with a 1–30 day half-life.
+No direct long↔short flip; positions pass through flat.
 
-Result on the same 252-day window:
+### C. Findings so far (one 252-day window)
 
-| | |
-|---|---|
-| AR(1) coefficient in (0, 1) — i.e. κ > 0 | 87 of 87 |
-| Pass ADF at 5% | **11 of 87 (12.6%)** |
-| Tradeable (ADF and half-life 1–30 days) | 11 of 87 |
-| Median half-life, tradeable | 10.0 days |
-| Positions opened at \|s\| > 1.25 | 4 (1 long, 3 short) |
+- **K:** Marchenko–Pastur keeps 3–4 factors across 1,374 windows; the paper's 55%-variance rule wants 9 (range 3–15), mostly noise.
+- **PC1** is the market with a tilt: 74 of 87 load positively; the 13 that don't are defensives with small loadings.
+- **Residual:** 3 factors explain ~60% of a typical stock's variance (residual std / raw std = 0.63).
+- **Mean reversion is weak so far:** all 87 have b < 1 (forced by X ending at 0), but only 11 pass ADF vs ~4 expected by chance; only WDC and TRI pass strongly.
 
-**Every residual looks mean-reverting by κ, and that tells us nothing** — the Brownian-bridge effect from step 8 guarantees it. The ADF test is what actually filters, and the half-life bound removed nothing further.
+### D. Next
 
-**11 of 87 is not far above what noise would produce.** At a 5% significance level, about 4 of 87 would pass by chance even with no mean reversion at all — and the true chance rate here is higher than 5%, because the Brownian-bridge effect makes every residual look more stationary than it is. How much higher is not yet measured. Only two of the eleven, WDC (p = 0.0004) and TRI (p = 0.004), pass decisively; the rest sit between p = 0.02 and 0.05.
-
-So on this window there is **no clear evidence of residual mean reversion beyond chance.** That is a result, not a failure — but it means the strategy's edge cannot be established window by window. It has to come from the ADF pass rate across all 1,374 windows compared with the same pipeline run on shuffled returns (step 13).
-
-**D. Positions**
-
-10. **Signal** — `s = −m / σ_eq`, a z-score of how stretched X is.
-11. **Trade** — buy below −1.25, short above +1.25; close longs at |s| < 0.50, shorts at |s| < 0.75 (earlier, because shorts carry borrow cost).
-12. **Portfolio** — 1× gross, checked for dollar neutrality and zero net exposure to each factor every rebalance.
-
-**E. Validation — prove it isn't noise**
-
-13. Costs on turnover, bootstrap CI on Sharpe, sensitivity across every parameter, and the whole pipeline re-run on **shuffled returns**. Step 9 already shows the in-window statistics flatter the data, so a result only counts if it clearly beats that baseline.
+- Sizing: positions → weights that are dollar-neutral, factor-neutral (Σ w_i β_{ik} = 0) and 1× gross
+- Rebalancing uses a 20% no-trade band (`run_portfolio_backtest`, `engine/backtest_statistical_arbitrage.py`)
+- Validation: shuffled-residual null, beat a simple 5-day reversal, cost break-even, walk-forward
 
 ### Limitations specific to this strategy
 
-- **Survivorship bias matters more** — PCA on today's survivors finds cleaner factors than the real historical universe would.
-- **Turnover is the cost risk** — the strategy rebalances far more often than Strategy 1, so costs charged on turnover will matter much more.
-- **Short borrow not modelled** — every short assumes a locate.
-- **K can change between windows**, so `PC2` on one date isn't guaranteed to be the same economic factor on another.
-- **Rebalancing uses a no-trade band.** A name is traded only when its target changes or its actual weight drifts more than 20% from target, so the book is dollar- and factor-neutral at the moment of trading and drifts within the band in between. `band=0` reproduces daily rebalancing exactly, and a test enforces it.
+- Survivorship bias matters more: PCA on today's survivors finds cleaner factors.
+- Turnover is the main cost risk; short borrow not modelled.
+- GOOG and GOOGL are near-duplicate residuals; one should be dropped.
+- Residual cross-correlation check (`research/diagnostics.py`) not yet run.
 
 ---
 

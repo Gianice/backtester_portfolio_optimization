@@ -8,6 +8,8 @@ you held it yesterday. Open and close thresholds differ on purpose — the
 gap between them stops daily flip-flopping, and every round trip costs money.
 """
 
+##havent tested this yet because havent generate residuals.csv
+
 import pandas as pd
 
 S_OPEN = 1.25          # open when |s| > 1.25
@@ -26,27 +28,31 @@ def update_positions(prev_pos: pd.Series, s: pd.Series, tradeable: pd.Series) ->
     """
     # 1. Align prev_pos to today's tickers. A ticker can appear or disappear
     #    between windows. Missing -> 0 (flat).
-    #    Hint: prev_pos.reindex(s.index).fillna(0)
-    # TODO: prev = ...
+    prev_pos = prev_pos.reindex(s.index).fillna(0)
+    tradeable = tradeable.reindex(s.index).fillna(False).astype(bool)
+
 
     # 2. Start today's positions from yesterday's.
-    # TODO: pos = prev.copy()
+    pos = prev_pos.copy()
 
     # 3. OPEN — only from flat, only if tradeable.
     #    flat AND tradeable AND s < -S_OPEN  -> +1  (cheap: buy)
     #    flat AND tradeable AND s >  S_OPEN  -> -1  (rich: short)
-    #    Hint: build each condition as a boolean mask with &, then pos[mask] = 1
-    #    All conditions check `prev`, NOT `pos`.
-    # TODO
+    open_long_mask = (prev_pos == 0) & (tradeable) & (s < -S_OPEN) 
+    open_short_mask = (prev_pos == 0) & (tradeable) & (s > S_OPEN)
+    pos[open_long_mask] = 1
+    pos[open_short_mask] = -1
 
     # 4. CLOSE — check against `prev`, not `pos`.
     #    was long  (prev == 1)  AND s > -S_CLOSE_LONG   -> 0
     #    was short (prev == -1) AND s <  S_CLOSE_SHORT  -> 0
-    # TODO
+    close_long_mask = (prev_pos == 1) & (s > -S_CLOSE_LONG)
+    close_short_mask = (prev_pos == -1) & (s < S_CLOSE_SHORT)
+    pos[close_long_mask] = 0
+    pos[close_short_mask] = 0
 
     # 5. FORCE CLOSE anything no longer tradeable (lost evidence of reversion).
-    #    Hint: pos[~tradeable] = 0
-    # TODO
+    pos[~tradeable] = 0
 
     return pos
 
