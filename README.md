@@ -9,7 +9,7 @@ A modular backtesting engine for systematic equity strategies, built from the da
 | **Type** | Long-only trend following, per ticker | Long/short, market- and factor-neutral portfolio |
 | **Signal** | 20/50-day MA crossover with a volatility-regime filter | Mean reversion of each stock's residual after removing common factors (Avellaneda & Lee, 2010) |
 | **Engine** | `engine/backtest.py` — per-ticker loop, buy/sell signals | `engine/backtest_statistical_arbitrage.py` — signed target weights, costs on turnover |
-| **Status** | ✅ Complete, with results | 🚧 In progress — engine, factors, residuals and OU filter built; signal and backtest next |
+| **Status** | ✅ Complete, with results | 🚧 In progress — engine, factors, residuals, OU filter, positions and sizing built; daily loop and backtest next |
 | **Section** | [Results](#strategy-1--moving-average-crossover-results) | [Pipeline](#strategy-2--pca-residual-statistical-arbitrage-in-progress) |
 
 **Strategy 1 headline:** it **captures 36% of the return available from buy-and-hold, and beats it on 13 of 87 tickers**. That is reported up front rather than buried, because the purpose of the harness is to produce numbers you can defend.
@@ -139,6 +139,7 @@ research/
   residuals.py            Strategy 2: factor regression and cumulative residuals
   ou.py                   Strategy 2: OU fit and ADF stationarity filter
   signals.py              Strategy 2: s-score → positions (+1 / −1 / 0)
+  sizing.py               Strategy 2: positions → dollar- and factor-neutral weights (QP)
   diagnostics.py          Strategy 2: residual cross-correlation check
 
 tests/
@@ -347,18 +348,36 @@ For each trade date, take the previous T days of returns, excluding the trade da
 
 No direct long↔short flip; positions pass through flat.
 
-### C. Findings so far (one 252-day window)
+### C. Sizing and hedging — `size_positions()`, `hedge_qp()` (`research/sizing.py`)
+
+The positions above choose *direction*, but the mix of names can carry hidden market or factor exposure (e.g. long mostly high-β stocks). Sizing removes it, so P&L comes only from the residuals.
+
+Notation (one day, active tickers only, i.e. today's position ≠ 0): **y** = positions (+1 / −1), **B** = betas (n × K), **w** = weights.
+
+> minimise ‖w − y‖²
+> subject to  Σ wᵢ = 0  (dollar-neutral)
+>       Bᵀw = 0  (zero exposure to every PC: the hedge)
+>       yᵢ wᵢ ≥ 0  (each weight keeps its signal's sign, or goes to 0)
+
+- A quadratic program, solved with `cvxpy`. Without the sign constraint it equals the regression residual of y on [1, B] (proved via Lagrange multipliers); the sign constraint stops the hedge from betting against a stock's own signal.
+- Then scaled to 1× gross: w ← w / Σ|w|. Flat tickers get 0.
+- **Guard:** if active names ≤ 1 + K, the hedge would cancel everything — no trade that day.
+- **Book P&L** = Σ wᵢ (βᵢ·F + εᵢ) = Σ wᵢ εᵢ, since Σ wᵢ βᵢ = 0.
+- Toy check: y = [+1, −1, +1, −1], β = [1.2, 0.8, 0.9, 1.1] → w ≈ [+0.17, −0.17, +0.33, −0.33]; Σw = 0, Σwβ = 0, Σ|w| = 1.
+
+### D. Findings so far (one 252-day window)
 
 - **K:** Marchenko–Pastur keeps 3–4 factors across 1,374 windows; the paper's 55%-variance rule wants 9 (range 3–15), mostly noise.
 - **PC1** is the market with a tilt: 74 of 87 load positively; the 13 that don't are defensives with small loadings.
 - **Residual:** 3 factors explain ~60% of a typical stock's variance (residual std / raw std = 0.63).
 - **Mean reversion is weak so far:** all 87 have b < 1 (forced by X ending at 0), but only 11 pass ADF vs ~4 expected by chance; only WDC and TRI pass strongly.
 
-### D. Next
+### E. Next
 
-- Sizing: positions → weights that are dollar-neutral, factor-neutral (Σ w_i β_{ik} = 0) and 1× gross
+- Daily loop wiring factors → residuals → OU → positions → sizing → engine; first Strategy 2 result
 - Rebalancing uses a 20% no-trade band (`run_portfolio_backtest`, `engine/backtest_statistical_arbitrage.py`)
 - Validation: shuffled-residual null, beat a simple 5-day reversal, cost break-even, walk-forward
+- Variants to compare: hedge with all stocks (not just active), or with a factor basket
 
 ### Limitations specific to this strategy
 
@@ -396,7 +415,8 @@ Listed because they bound what the numbers above are worth.
 - [x] Wide-format loader with parquet cache
 - [x] PCA residual stat arb — rolling factor extraction, K by Marchenko–Pastur vs 55% variance
 - [x] PCA residual stat arb — residuals and OU fit with ADF filter
-- [ ] PCA residual stat arb — signal and portfolio backtest
+- [x] PCA residual stat arb — positions with memory, and factor-neutral sizing (QP)
+- [ ] PCA residual stat arb — daily loop and portfolio backtest
 - [ ] PCA residual stat arb — validation against a shuffled-returns null baseline
 - [ ] Walk-forward out-of-sample harness and parameter sensitivity grid
 - [ ] Portfolio allocation layer — single capital pool, position sizing, mean-variance optimiser
