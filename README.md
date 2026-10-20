@@ -272,105 +272,104 @@ Remove the part of each stock's return explained by common factors, then bet tha
 
 ### A. Steps
 
-Notation: **N** = stocks (87), **T** = window length (252 days), **K** = factors kept, **t** = day, **i** = stock, **k** = factor.
+Notation: $N$ = stocks (87), $T$ = window length (252 days), $K$ = factors kept, $t$ = day, $i$ = stock, $k$ = factor.
 
 **1. Rolling returns** — `load_wide_cached()` (`data/wide.py`), rolling loop in `research/factors.py`
 
-For each trade date, take the previous T days of returns, excluding the trade date (no look-ahead):
+For each trade date, take the previous $T$ days of returns, excluding the trade date (no look-ahead):
 
-> R = [ r_{i,t} ], shape T × N
+$$R = [\,r_{i,t}\,] \in \mathbb{R}^{T \times N}$$
 
-- r_{i,t} = simple return of stock i on day t
+- $r_{i,t}$ = simple return of stock $i$ on day $t$
 
 **2. Standardise** — `extract_factors()` (`research/factors.py`)
 
-> Rs_{i,t} = ( r_{i,t} − r̄_i ) / σ_i
+$$Rs_{i,t} = \frac{r_{i,t} - \bar{r}_i}{\sigma_i}$$
 
-- r̄_i, σ_i = mean and std of stock i *within the window*
+- $\bar{r}_i$, $\sigma_i$ = mean and std of stock $i$ *within the window*
 - Every stock gets mean 0, std 1, so volatile names don't dominate.
 
 **3. Correlation matrix** — `extract_factors()`
 
-> C = Rsᵀ Rs / (T − 1), shape N × N
+$$C = \frac{Rs^\top Rs}{T-1} \in \mathbb{R}^{N \times N}$$
 
-- C_{ij} = correlation between stocks i and j (covariance of standardised returns)
+- $C_{ij}$ = correlation between stocks $i$ and $j$ (covariance of standardised returns)
 
 **4. Eigendecomposition** — `extract_factors()`
 
-> C v_k = λ_k v_k
+$$C\,v_k = \lambda_k\,v_k$$
 
-- v_k = eigenvector: weights across all stocks (a factor portfolio); λ_k = variance it explains, Σλ = N
+- $v_k$ = eigenvector: weights across all stocks (a factor portfolio); $\lambda_k$ = variance it explains, $\sum_k \lambda_k = N$
 - Sorted descending; signs fixed each window so a factor can't flip day to day.
 
 **5. Choose K** — `choose_k()` (`research/factors.py`)
 
-> keep λ_k > λ_max = (1 + √(N/T))² ≈ 2.52   (Marchenko–Pastur)
+$$\text{keep } \lambda_k > \lambda_{\max} = \left(1 + \sqrt{N/T}\right)^2 \approx 2.52 \quad \text{(Marchenko–Pastur)}$$
 
-- λ_max = the largest eigenvalue pure noise can produce with N stocks and T days.
-- Factor returns: **F = Rs · v_{1..K}**, shape T × K.
+- $\lambda_{\max}$ = the largest eigenvalue pure noise can produce with $N$ stocks and $T$ days.
+- Factor returns: $F = Rs \, v_{1..K} \in \mathbb{R}^{T \times K}$
 
 **6. Factor regression → residual** — `compute_residuals()` (`research/residuals.py`)
 
-> r_i = α_i + F β_i + ε_i
+$$r_i = \alpha_i + F\beta_i + \varepsilon_i$$
 
-- α_i = intercept; β_i = stock i's exposure to each factor (K,); ε_i = residual, the stock-specific return
-- Solved for all stocks at once: R = [1, F] · coef, coef shape (1+K) × N.
+- $\alpha_i$ = intercept; $\beta_i \in \mathbb{R}^K$ = stock $i$'s exposure to each factor; $\varepsilon_i$ = residual, the stock-specific return
+- Solved for all stocks at once: $R = [\mathbf{1}, F]\,\text{coef}$, with $\text{coef} \in \mathbb{R}^{(1+K) \times N}$
 
 **7. Cumulative residual** — `compute_residuals()`
 
-> X_{i,t} = Σ_{s≤t} ε_{i,s}
+$$X_{i,t} = \sum_{s \le t} \varepsilon_{i,s}$$
 
-- X = how far the stock has drifted from where the factors say it should be.
+- $X$ = how far the stock has drifted from where the factors say it should be.
 
 **8. OU fit, ADF and score** — `fit_ou()` (`research/ou.py`)
 
-> X_{t+1} = a + b X_t + ζ_t   (AR(1), discrete form of dX = κ(m − X)dt + σ dW)
+$$X_{t+1} = a + b\,X_t + \zeta_t \qquad \text{(AR(1), discrete form of } dX = \kappa(m - X)\,dt + \sigma\,dW)$$
 
 | Quantity | Formula | Meaning |
 |---|---|---|
-| κ | −ln(b) × 252 | speed of reversion (needs 0 < b < 1) |
-| half-life | ln 2 / (−ln b) days | days for the gap to halve |
-| m | a / (1 − b) | equilibrium level X reverts to |
-| σ_eq | √( Var(ζ) / (1 − b²) ) | typical distance of X from m |
-| s | (X_t − m) / σ_eq | how stretched X is, in σ units |
+| $\kappa$ | $-\ln(b) \times 252$ | speed of reversion (needs $0 < b < 1$) |
+| half-life | $\ln 2 \,/\, (-\ln b)$ days | days for the gap to halve |
+| $m$ | $a \,/\, (1 - b)$ | equilibrium level $X$ reverts to |
+| $\sigma_{eq}$ | $\sqrt{\text{Var}(\zeta) \,/\, (1 - b^2)}$ | typical distance of $X$ from $m$ |
+| $s$ | $(X_t - m) \,/\, \sigma_{eq}$ | how stretched $X$ is, in $\sigma$ units |
 
-- **ADF test:** H₀ = random walk (b = 1). Trade only if p < 0.05 **and** half-life is 1–30 days (`tradeable`).
+- **ADF test:** $H_0$: random walk ($b = 1$). Trade only if $p < 0.05$ **and** half-life is 1–30 days (`tradeable`).
 
 ### B. Positions — `update_positions()` (`research/signals.py`)
 
 | Yesterday | Condition | Today |
 |---|---|---|
-| flat | tradeable and s < −1.25 | long (+1) |
-| flat | tradeable and s > +1.25 | short (−1) |
-| long | s > −0.50 | close |
-| short | s < +0.75 | close (earlier: borrow cost) |
+| flat | tradeable and $s < -1.25$ | long (+1) |
+| flat | tradeable and $s > +1.25$ | short (−1) |
+| long | $s > -0.50$ | close |
+| short | $s < +0.75$ | close (earlier: borrow cost) |
 | any | not tradeable | close |
 
 No direct long↔short flip; positions pass through flat.
 
 ### C. Sizing and hedging — `size_positions()`, `hedge_qp()` (`research/sizing.py`)
 
-The positions above choose *direction*, but the mix of names can carry hidden market or factor exposure (e.g. long mostly high-β stocks). Sizing removes it, so P&L comes only from the residuals.
+The positions above choose *direction*, but the mix of names can carry hidden market or factor exposure (e.g. long mostly high-$\beta$ stocks). Sizing removes it, so P&L comes only from the residuals.
 
-Notation (one day, active tickers only, i.e. today's position ≠ 0): **y** = positions (+1 / −1), **B** = betas (n × K), **w** = weights.
+Notation (one day, active tickers only, i.e. today's position $\neq 0$): $y \in \{+1,-1\}^n$ = positions, $B \in \mathbb{R}^{n \times K}$ = betas, $w \in \mathbb{R}^n$ = weights.
 
-> minimise ‖w − y‖²
-> subject to  Σ wᵢ = 0  (dollar-neutral)
->       Bᵀw = 0  (zero exposure to every PC: the hedge)
->       yᵢ wᵢ ≥ 0  (each weight keeps its signal's sign, or goes to 0)
+$$\min_{w} \; \lVert w - y \rVert^2$$
 
-- A quadratic program, solved with `cvxpy`. Without the sign constraint it equals the regression residual of y on [1, B] (proved via Lagrange multipliers); the sign constraint stops the hedge from betting against a stock's own signal.
-- Then scaled to 1× gross: w ← w / Σ|w|. Flat tickers get 0.
-- **Guard:** if active names ≤ 1 + K, the hedge would cancel everything — no trade that day.
-- **Book P&L** = Σ wᵢ (βᵢ·F + εᵢ) = Σ wᵢ εᵢ, since Σ wᵢ βᵢ = 0.
-- Toy check: y = [+1, −1, +1, −1], β = [1.2, 0.8, 0.9, 1.1] → w ≈ [+0.17, −0.17, +0.33, −0.33]; Σw = 0, Σwβ = 0, Σ|w| = 1.
+$$\text{subject to} \quad \sum_i w_i = 0 \;\;\text{(dollar-neutral)}, \qquad B^\top w = 0 \;\;\text{(factor-neutral: the hedge)}, \qquad y_i w_i \ge 0 \;\;\text{(keep the signal's sign, or } w_i = 0)$$
+
+- A quadratic program, solved with `cvxpy`. Without the sign constraint it equals the regression residual of $y$ on $[\mathbf{1}, B]$, i.e. $w = y - Z(Z^\top Z)^{-1}Z^\top y$ with $Z = [\mathbf{1}, B]$ (shown via Lagrange multipliers). The sign constraint stops the hedge from betting against a stock's own signal.
+- Then scaled to 1× gross: $w \leftarrow w \,/\, \sum_i \lvert w_i \rvert$. Flat tickers get 0.
+- **Guard:** if active names $\le 1 + K$, the hedge would cancel everything — no trade that day.
+- **Book P&L:** $\sum_i w_i(\beta_i^\top F + \varepsilon_i) = \sum_i w_i \varepsilon_i$, since $\sum_i w_i \beta_i = 0$.
+- Toy check: $y = [+1,-1,+1,-1]$, $\beta = [1.2, 0.8, 0.9, 1.1]$ → $w \approx [+0.17, -0.17, +0.33, -0.33]$; $\sum w = 0$, $\sum w\beta = 0$, $\sum \lvert w \rvert = 1$.
 
 ### D. Findings so far (one 252-day window)
 
 - **K:** Marchenko–Pastur keeps 3–4 factors across 1,374 windows; the paper's 55%-variance rule wants 9 (range 3–15), mostly noise.
 - **PC1** is the market with a tilt: 74 of 87 load positively; the 13 that don't are defensives with small loadings.
 - **Residual:** 3 factors explain ~60% of a typical stock's variance (residual std / raw std = 0.63).
-- **Mean reversion is weak so far:** all 87 have b < 1 (forced by X ending at 0), but only 11 pass ADF vs ~4 expected by chance; only WDC and TRI pass strongly.
+- **Mean reversion is weak so far:** all 87 have $b < 1$ (forced by $X$ ending at 0), but only 11 pass ADF vs ~4 expected by chance; only WDC and TRI pass strongly.
 
 ### E. Next
 
