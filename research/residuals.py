@@ -18,15 +18,17 @@ def compute_residuals(win: pd.DataFrame, F: pd.DataFrame):
     Returns
     -------
     alpha : Series (tickers,)           intercept per stock
-    betas : DataFrame (tickers x K)     each stock's exposure to each factor
+    betas : DataFrame (tickers x K)     each stock's exposure to each factor, by theory should be (K x tickers) but we transpose so betas.loc[ticker] is the vector of factor exposures for that stock
     residual  : DataFrame (days x tickers)  residual returns
     cumres     : DataFrame (days x tickers)  cumulative residual — what OU fits
     """
     X = np.column_stack([np.ones(len(win)), F.to_numpy()])
     coef, ssr, rank, sv = np.linalg.lstsq(X, win, rcond=None)
+
+    #structure of coef: (K+1 x tickers) — first row is intercept, next K rows are factor exposures
     residual = win - X @ coef
     
-    # r = α + β·F
+    # r = α + F @ β
     #get r, α ,β
     
     residual = pd.DataFrame(residual, index= win.index, columns = win.columns)
