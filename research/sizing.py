@@ -74,6 +74,14 @@ def size_positions(pos: pd.Series, betas: pd.DataFrame) -> pd.Series:
 
     w = hedge_qp(y.to_numpy(dtype=float), B.to_numpy(dtype=float))
 
+    ##just for checking
+    print(f'weight sum(should approx to 0): {w.sum()}')
+    print(f'b@w(should approx to 0)= {B.T @ w}')
+    #check weight and pos has the same sign
+    df = pd.DataFrame({"pos": pos, "weight": w})
+    print(f'counts of sign of pos and weight not equal: {df[df['pos']*df['weight'] < 0].count()}')
+    print(f'active weights(abs) sum: {df.loc[active,'weight'].abs().sum()}')
+    
     # 5. scale to 1x gross
     if np.sum(np.abs(w)) < 1e-4:
         return w_full
