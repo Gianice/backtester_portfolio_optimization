@@ -17,8 +17,8 @@ import cvxpy as cp
 
 def hedge_qp(y: np.ndarray, B: np.ndarray) -> np.ndarray:
     """
-    y : (n,)    positions of active tickers, +1 / -1
-    B : (n, K)  betas of active tickers (rows = tickers, cols = PCs)
+    y : (n,)    positions of full tickers, +1 / -1 / 0
+    B : (n, K)  betas of tickers (rows = tickers, cols = PCs)
 
     Returns w (n,): closest to y such that
         sum(w) = 0, B^T w = 0 (orthogonal), and sign(w_i) agrees with y_i (or w_i = 0).
@@ -66,26 +66,20 @@ def size_positions(pos: pd.Series, betas: pd.DataFrame) -> pd.Series:
 
     # 1. active tickers only
     active = pos[pos != 0].index                                # tickers where pos != 0
-    y = pos.loc[active]                                    # pos for active tickers (n,)
-    B = betas.loc[active]                                       # betas for active tickers (n x K)
-
-    # 2. guard: need more names than columns in Z (1 + K)
-    #    if not enough -> return w_full (all zeros)
-    k = betas.shape[1]
-    if len(active) <= k +1:
-        return w_full
+    y = pos
+    B = betas.loc[pos.index]
+    
     
     # 3. hedge - using cvxpy to solve the regression problem with constraints
 
     w = hedge_qp(y.to_numpy(dtype=float), B.to_numpy(dtype=float))
 
     # 5. scale to 1x gross
-    if np.sum(np.abs(w)) < 1e-9:
+    if np.sum(np.abs(w)) < 1e-4:
         return w_full
     else:
-        pos_totrade = pd.Series(w/np.sum(np.abs(w)), index = active)
-        w_full.loc[active] = pos_totrade
-        return w_full
+        pos_totrade = pd.Series(w/np.sum(np.abs(w)), index = pos.index)
+        return pos_totrade
 
 
 if __name__ == "__main__":
